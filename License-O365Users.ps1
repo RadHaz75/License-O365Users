@@ -28,7 +28,7 @@ Param(
 
 # Region Log files and Setup
 # Create log files
-$Global:LogFilePath = "C:\temp\License-O365Users_$(Get-date -f yyyy-MM-dd-HH-mm-ss).log"
+$Global:LogFilePath = "$($PSScriptRoot)\License-O365Users_$(Get-date -f yyyy-MM-dd-HH-mm-ss).log"
 Add-Content $Global:LogFilePath -Value ("$(get-date -f s) Log File Started")
 $Global:old_ErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Stop"
