@@ -90,12 +90,7 @@ Function Generate-CSVFile
 
 Function End-Script
 {
-	Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Script complete. Emailing logs and exiting") -PassThru | Write-Host -ForegroundColor Green
-	# Email errors if there are any
-	# Try
-		# {Send-MailMessage -To $Global:ToEmail -From $Global:FromEmail -SmtpServer $Global:SmtpRelay -Subject "Copy-FilesToRemoteServers Logs" -Body "Script logs attached" -Attachments $Global:Global:LogFilePath}
-	# Catch
-		# {}
+	Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Script complete. Exiting") -PassThru | Write-Host -ForegroundColor Green
 
 	$ErrorActionPreference = $Global:old_ErrorActionPreference
 	Exit
