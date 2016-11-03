@@ -21,7 +21,7 @@
 [CmdletBinding()]
 Param(
  [Parameter(Mandatory=$False,Position=1)]
-   [String]$InputFilePath = "$($PSScriptRoot)\LicenseInfo.csv",
+   [String]$LicenseFilePath = "$($PSScriptRoot)\LicenseInfo.csv",
  [Parameter(Mandatory=$False,Position=2)]
    [Switch]$GenerateCSVFile
 )
@@ -112,7 +112,7 @@ If ($GenerateCSVFile)
 Try
 {
 	Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Reading input file") -PassThru | Write-Host
-	$Data = Import-Csv $InputFilePath
+	$Data = Import-Csv $LicenseFilePath
 }
 Catch
 {
