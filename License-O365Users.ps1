@@ -196,7 +196,7 @@ ForEach ($User in $Data)
 				# Loop through all of the license services, and set Current Value to 1 if they are enabled
 				ForEach ($ServicePlan in ($License.ServiceStatus | ? {$_.ServicePlan.ServiceName -notmatch "INTUNE_O365"}))
 				{
-					If (($ServicePlan.ProvisioningStatus -eq "Success") -or ($ServicePlan.ProvisioningStatus -eq "PendingActivation") -or ($ServicePlan.ProvisioningStatus -eq "PendingInput"))
+					If (($ServicePlan.ProvisioningStatus -eq "Success") -or ($ServicePlan.ProvisioningStatus -eq "PendingActivation") -or ($ServicePlan.ProvisioningStatus -eq "PendingInput") -or ($ServicePlan.ProvisioningStatus -eq "PendingProvisioning"))
 						{($UserLicensesTable | ? {($_.License.Split(":")[0] -eq ($License.AccountSkuId.Split(":")[1])) -and ($_.License.Split(":")[1] -eq ($ServicePlan.ServicePlan.ServiceName.Split(":")[0]))}).CurrentValue = 1}
 				}
 			}
@@ -205,6 +205,11 @@ ForEach ($User in $Data)
 		
 		# Group all of the licenses by Account SKU and work on each one individually
 		$AccountSkus = $UserLicensesTable | Group-Object {$_.License.Split(":")[0]} | ? {($_.Name -ne "UserPrincipalName") -and ($_.Name -ne "UsageLocation")}
+		$AllEnabled = @()
+		$FinalDisabledPlans = @()
+		$CurrentDisabledPlans = ($AccountSkus.Group | ? {$_.CurrentValue -eq 0}).License
+		$NewDisabledPlans = @()
+		$NewEnabledPlans = @()
 		ForEach ($AccountSku in $AccountSkus)
 		{
 			ForEach ($Item in $AccountSku.Group)
@@ -222,17 +227,11 @@ ForEach ($User in $Data)
 			If (($FinalValueStats.Count -eq $FinalValueStats.Sum) -and (($AccountSku.Group.CurrentValue | Measure-Object -Sum).Sum -eq 0))
 			{
 				# All features need enabled, none currently are
-				Try
-				{
-					Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Adding all features of $($AccountSku.Name) to $($User.UserPrincipalName)") -PassThru | Write-Host
-					Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -AddLicenses "$($CompanyPrefix):$($AccountSku.Name)" -ErrorAction Stop
-				}
-				Catch
-					{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error adding all features of $($AccountSku.Name) to $($User.UserPrincipalName): $_") -PassThru | Write-Host -ForegroundColor Red}
-			}			
+				$AllEnabled += $AccountSku.Name
+			}		
 			ElseIf (($FinalValueStats.Sum -eq 0) -and (($AccountSku.Group.CurrentValue | Measure-Object -Sum).Sum -gt 0))
 			{
-				# All features need disabled, at least one currently is
+				# All features need disabled, at least one currently is, always process removes first
 				Try
 				{
 					Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Removing all features of $($AccountSku.Name) to $($User.UserPrincipalName)") -PassThru | Write-Host
@@ -243,36 +242,67 @@ ForEach ($User in $Data)
 			}
 			ElseIf (@($ChangesNeeded).Count -gt 0)
 			{
-				$DisabledPlans = @()
 				ForEach ($DisablePlan in ($AccountSku.Group | ? {$_.FinalValue -eq 0}))
-					{$DisabledPlans += $DisablePlan.License.Split(":") | Select -Last 1}
+					{$FinalDisabledPlans += $DisablePlan.License}
 				ForEach ($ChangeNeeded in $ChangesNeeded)
 				{
 					If (($ChangeNeeded.NeededValue -eq 0) -and ($ChangeNeeded.CurrentValue -eq 1))
-					{
-						Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Disabling feature $($ChangeNeeded.License.Split(":") | Select -Last 1) in $($AccountSku.Name) for $($User.UserPrincipalName)") -PassThru | Write-Host
-						$DisabledPlans += ($ChangeNeeded.License.Split(":") | Select -Last 1)
-					}
+						{$NewDisabledPlans += $ChangeNeeded.License}
 					ElseIf (($ChangeNeeded.NeededValue -eq 1) -and ($ChangeNeeded.CurrentValue -eq 0))
-						{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Enabling feature $($ChangeNeeded.License.Split(":") | Select -Last 1) in $($AccountSku.Name) for $($User.UserPrincipalName)") -PassThru | Write-Host}
+						{$NewEnabledPlans += $ChangeNeeded.License}
 				}
-				Try
-				{
-					$SkuOptions = New-MsolLicenseOptions -AccountSkuId "$($CompanyPrefix):$($AccountSku.Name)" -DisabledPlans $DisabledPlans
-					If (($AccountSku.Group.CurrentValue | Measure-Object -Sum).Sum -gt 0)
-					{
-						Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Comitting feature changes in $($AccountSku.Name) for $($User.UserPrincipalName)") -PassThru | Write-Host
-						Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -LicenseOptions $SkuOptions -ErrorAction Stop
-					}
-					Else
-					{
-						Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Adding new license $($AccountSku.Name) with limited features for $($User.UserPrincipalName)") -PassThru | Write-Host
-						Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -AddLicenses "$($CompanyPrefix):$($AccountSku.Name)" -LicenseOptions $SkuOptions -ErrorAction Stop
-					}
-				}
-				Catch
-					{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error comitting feature changes in $($AccountSku.Name) for $($User.UserPrincipalName): $_") -PassThru | Write-Host -ForegroundColor Red}
 			}
+		}
+
+		# Process features to be newly disabled first
+		ForEach ($NewDisabledPlan in ($NewDisabledPlans | Group-Object {$_.Split(":")[0]}))
+		{
+			$Disable = @()
+			ForEach ($DisablePlanName in $NewDisabledPlan.Group)
+			{
+				Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Disabling feature $($DisablePlanName.Split(":")[1]) in $($DisablePlanName.Split(":")[0]) for $($User.UserPrincipalName)") -PassThru | Write-Host
+				$Disable += $DisablePlanName.Split(":")[1]
+			}
+			ForEach ($DisablePlanName in ($CurrentDisabledPlans | ? {$_ -match $NewDisabledPlan.Group.Split(":")[0]}))
+				{$Disable += $DisablePlanName.Split(":")[1]}
+			Try
+			{
+				$SkuOptions = New-MsolLicenseOptions -AccountSkuId "$($CompanyPrefix):$($NewDisabledPlan.Name)" -DisabledPlans $Disable
+				Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -LicenseOptions $SkuOptions -ErrorAction Stop
+			}
+			Catch
+				{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error disabling feature(s) in $($NewDisabledPlan.Name) for $($User.UserPrincipalName): $_") -PassThru | Write-Host -ForegroundColor Red}
+		}
+
+		# Process features to be newly added second
+		ForEach ($NewEnabledPlan in ($NewEnabledPlans | Group-Object {$_.Split(":")[0]}))
+		{
+			ForEach ($EnablePlanName in $NewEnabledPlan.Group)
+				{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Enabling feature $($EnablePlanName.Split(":")[1]) in $($EnablePlanName.Split(":")[0]) for $($User.UserPrincipalName)") -PassThru | Write-Host}
+			$Disable = @()
+			$Disable += $DisabledPlans | ? {$_.Split(":") -eq $NewEnabledPlan.Name} | % {$_.Split(":")[1]}
+			Try
+			{
+				$SkuOptions = New-MsolLicenseOptions -AccountSkuId "$($CompanyPrefix):$($NewEnabledPlan.Name)" -DisabledPlans $Disable
+				If ((($UserLicensesTable | ? {$_.License.Split(":")[0] -eq $NewEnabledPlan.Name}).CurrentValue | Measure-Object -Sum).Sum -eq 0)
+					{Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -AddLicenses "$($CompanyPrefix):$($NewEnabledPlan.Name)" -LicenseOptions $SkuOptions -ErrorAction Stop}
+				Else
+					{Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -LicenseOptions $SkuOptions -ErrorAction Stop}
+			}
+			Catch
+				{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error enabling feature(s) in $($NewEnabledPlan.Name) for $($User.UserPrincipalName): $_") -PassThru | Write-Host -ForegroundColor Red}
+		}
+
+		# Finally, process entire licenses that need to be enabled
+		ForEach ($AllEnable in $AllEnabled)
+		{
+			Try
+			{
+				Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Adding all features of $($AllEnable) to $($User.UserPrincipalName)") -PassThru | Write-Host
+				Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -AddLicenses "$($CompanyPrefix):$($AllEnable)" -ErrorAction Stop
+			}
+			Catch
+				{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error adding all features of $($AllEnable) to $($User.UserPrincipalName): $_") -PassThru | Write-Host -ForegroundColor Red}
 		}
 	}
 }
