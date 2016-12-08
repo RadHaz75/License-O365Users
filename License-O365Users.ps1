@@ -1,6 +1,6 @@
 <#
-    .SYNOPSIS
-     Updates Office 365 licenses of users from a CSV file
+	.SYNOPSIS
+	 Updates Office 365 licenses of users from a CSV file
 	.DESCRIPTION
 	 This script will set or update the Office 365 UsageLocation and licenses assigned to the users in the specified CSV file. If the CSV does not already exist, the 
 	 script can create it with the current set of licenses using the GenerateCSVFile parameter. To add a feature of a license to a user, put a 1 in the field. To 
@@ -16,6 +16,11 @@
 	 Created by Andy Meyers, Anexinet
 	 Created on 11/03/2016
 	 Version 1.0
+	 - Initial version
+	 Version 1.1
+	 - 12/09/2016
+	 - Prioritized changes to process removes first
+	 - Added PendingProvisioning state to indicate Plan is enabled
 #>
 
 [CmdletBinding()]
