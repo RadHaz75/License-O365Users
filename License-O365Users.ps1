@@ -2,10 +2,11 @@
 	.SYNOPSIS
 	 Updates Office 365 licenses of users from a CSV file
 	.DESCRIPTION
-	 This script will set or update the Office 365 UsageLocation and licenses assigned to the users in the specified CSV file. If the CSV does not already exist, the 
-	 script can create it with the current set of licenses using the GenerateCSVFile parameter. To add a feature of a license to a user, put a 1 in the field. To 
-	 add all features of a license to a user, put a 1 in all fields for the license. To remove a feature of a license from a user, put a 0 in the field. To remove all 
-	 features of a license from a user, put a 0 in all fields for the license. To not modify a feature, license or UsageLocation for a user, leave the field blank.
+	 THIS SCRIPT REQUIRES POWERSHELL VERSION 5 TO RUN (https://www.microsoft.com/en-us/download/details.aspx?id=50395). This script will set or update the Office 365 
+	 UsageLocation and licenses assigned to the users in the specified CSV file. If the CSV does not already exist, the script can create it with the current set of 
+	 licenses using the GenerateCSVFile parameter. To add a feature of a license to a user, put a 1 in the field. To add all features of a license to a user, put a 1 
+	 in all fields for the license. To remove a feature of a license from a user, put a 0 in the field. To remove all features of a license from a user, put a 0 in all 
+	 fields for the license. To not modify a feature, license or UsageLocation for a user, leave the field blank.
 	.EXAMPLE
 	 .\License-O365Users.ps1 -GenerateCSVFile
 	 Runs the script to generate the LicenseInfo.csv file containing the required headers and licenses from the currently logged in Office 365 subscription
@@ -16,11 +17,17 @@
 	 Created by Andy Meyers, Anexinet
 	 Created on 11/03/2016
 	 Version 1.0
+	 REQUIRES POWERSHELL VERSION 5
+	 https://www.microsoft.com/en-us/download/details.aspx?id=50395
 	 - Initial version
 	 Version 1.1
 	 - 12/09/2016
 	 - Prioritized changes to process removes first
 	 - Added PendingProvisioning state to indicate Plan is enabled
+	 Version 1.2
+	 - 01/13/2017
+	 - Fixed wrong variable used to add features causing error
+	 - Added PS version check
 #>
 
 [CmdletBinding()]
@@ -33,7 +40,7 @@ Param(
 
 # Region Log files and Setup
 # Create log files
-$Global:LogFilePath = "$($PSScriptRoot)\License-O365Users_$(Get-date -f yyyy-MM-dd-HH-mm-ss).log"
+$Global:LogFilePath = "C:\temp\License-O365Users_$(Get-date -f yyyy-MM-dd-HH-mm-ss).log"
 Add-Content $Global:LogFilePath -Value ("$(get-date -f s) Log File Started")
 $Global:old_ErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Stop"
@@ -43,6 +50,25 @@ $ErrorActionPreference = "Stop"
 # Define Functions
 #################################################################################################################
 # Region Functions
+
+Function Check-PSVersion
+{
+	Try
+	{
+		Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Checking PowerShell version") -PassThru | Write-Host
+		If ($PSVersionTable.PSVersion.Major -lt 5)
+		{
+			Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) This script requires at least PowerShell V5. You are on V$($PSVersionTable.PSVersion.Major). Please install PowerShell V5 from https://www.microsoft.com/en-us/download/details.aspx?id=50395. Exiting") -PassThru | Write-Host -ForegroundColor Red
+			End-Script
+		}
+	}
+	Catch
+	{
+		Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Error encountered checking PowerShell version. Exiting: $_") -PassThru | Write-Host -ForegroundColor Red
+		End-Script
+	}
+
+}
 
 Function Test-MsolConnection
 {
@@ -105,6 +131,9 @@ Function End-Script
 #################################################################################################################
 # Begin Script
 #################################################################################################################
+
+# Verify at least PowerShell V5
+Check-PSVersion
 
 # Verify connection to Office 365
 Test-MsolConnection
@@ -285,9 +314,9 @@ ForEach ($User in $Data)
 			ForEach ($EnablePlanName in $NewEnabledPlan.Group)
 				{Add-Content $Global:LogFilePath -Value ("$(Get-Date -f s) Enabling feature $($EnablePlanName.Split(":")[1]) in $($EnablePlanName.Split(":")[0]) for $($User.UserPrincipalName)") -PassThru | Write-Host}
 			$Disable = @()
-			$Disable += $DisabledPlans | ? {$_.Split(":") -eq $NewEnabledPlan.Name} | % {$_.Split(":")[1]}
 			Try
 			{
+				$Disable += $FinalDisabledPlans | ? {$_.Split(":") -eq $NewEnabledPlan.Name} | % {$_.Split(":")[1]}
 				$SkuOptions = New-MsolLicenseOptions -AccountSkuId "$($CompanyPrefix):$($NewEnabledPlan.Name)" -DisabledPlans $Disable
 				If ((($UserLicensesTable | ? {$_.License.Split(":")[0] -eq $NewEnabledPlan.Name}).CurrentValue | Measure-Object -Sum).Sum -eq 0)
 					{Set-MsolUserLicense -UserPrincipalName $User.UserPrincipalName -AddLicenses "$($CompanyPrefix):$($NewEnabledPlan.Name)" -LicenseOptions $SkuOptions -ErrorAction Stop}
